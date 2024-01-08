@@ -1,0 +1,153 @@
+---
+jobs:
+- name: unit-tests
+  public: true
+  build_logs_to_retain: 100
+  serial: true
+  plan:
+    - in_parallel:
+        - get: bosh-ali-storage-cli
+          trigger: true
+        - get: ali-storage-cli-docker-image
+          trigger: true
+    - task: run-unit-tests
+      file: bosh-ali-storage-cli/ci/tasks/run-unit-tests.yml
+
+- name: publish-and-tag
+  plan:
+  - in_parallel:
+    - get: bosh-ali-storage-cli
+      trigger: true
+      passed:
+      - unit-tests
+    - get: ali-storage-cli-docker-image
+      trigger: true
+      passed: [unit-tests]
+    - put: version-semver
+      params:
+        bump: patch
+  - in_parallel:
+    - task: build-linux
+      image: ali-storage-cli-docker-image
+      file: bosh-ali-storage-cli/ci/tasks/build.yml
+      output_mapping: { out: out-linux }
+      params:
+        GOOS: linux
+    - task: build-windows
+      image: ali-storage-cli-docker-image
+      file: bosh-ali-storage-cli/ci/tasks/build.yml
+      output_mapping: { out: out-windows }
+      params:
+        GOOS: windows
+  - in_parallel:
+    - put: release-bucket-linux
+      params: { file: out-linux/ali-storage-cli-*-linux-amd64 }
+    - put: release-bucket-windows
+      params: { file: out-windows/ali-storage-cli-*-windows-amd64.exe }
+  - put: bosh-ali-storage-cli
+    params:
+      repository: bosh-ali-storage-cli
+      rebase: true
+      tag: version-semver/number
+      tag_prefix: v
+
+- name: build-ali-storage-cli-docker-image
+  plan:
+  - get: bosh-ali-storage-cli
+    resource: bosh-ali-storage-cli-for-docker-image-creation
+    trigger: true
+  - get: bosh-golang-release-image
+    trigger: true
+  - put: ali-storage-cli-docker-image
+    params:
+      build: "bosh-ali-storage-cli/ci/docker/boshcpi.ali-storage-cli"
+    get_params:
+      skip_download: true
+
+- name: bump-deps
+  plan:
+    - in_parallel:
+        - get: bosh-ali-storage-cli
+        - get: golang-release
+        - get: weekly
+          trigger: true
+    - task: bump-deps
+      file: golang-release/ci/tasks/shared/bump-deps.yml
+      input_mapping:
+        input_repo: bosh-ali-storage-cli
+      output_mapping:
+        output_repo: bumped-bosh-ali-storage-cli
+    - task: unit-tests
+      file: bosh-ali-storage-cli/ci/tasks/run-unit-tests.yml
+      input_mapping:
+        bosh-ali-storage-cli: bumped-bosh-ali-storage-cli
+    - put: bosh-ali-storage-cli
+      params:
+        repository: bumped-bosh-ali-storage-cli
+        rebase: true
+resources:
+- name: bosh-ali-storage-cli
+  type: git
+  source:
+    uri: git@github.com:cloudfoundry/bosh-ali-storage-cli.git
+    branch: main
+    private_key: ((github_deploy_key_bosh-ali-storage-cli.private_key))
+
+- name: bosh-ali-storage-cli-for-docker-image-creation
+  type: git
+  source:
+    uri: git@github.com:cloudfoundry/bosh-ali-storage-cli.git
+    branch: main
+    private_key: ((github_deploy_key_bosh-ali-storage-cli.private_key))
+    paths: ["ci/docker/*"]
+
+- name: golang-release
+  type: git
+  source:
+    uri: https://github.com/cloudfoundry/bosh-package-golang-release.git
+
+- name: version-semver
+  type: semver
+  source:
+    initial_version: 0.0.1
+    key: current-version
+    bucket: bosh-ali-storage-cli-artifacts
+    access_key_id: ((bosh_ali_storage_cli_pipeline.username))
+    secret_access_key: ((bosh_ali_storage_cli_pipeline.password))
+
+- name: release-bucket-linux
+  type: s3
+  source:
+    regexp: ali-storage-cli-(.*)-linux-amd64
+    bucket: bosh-ali-storage-cli-artifacts
+    access_key_id: ((bosh_ali_storage_cli_pipeline.username))
+    secret_access_key: ((bosh_ali_storage_cli_pipeline.password))
+
+- name: release-bucket-windows
+  type: s3
+  source:
+    regexp: ali-storage-cli-(.*)-windows-amd64\.exe
+    bucket: bosh-ali-storage-cli-artifacts
+    access_key_id: ((bosh_ali_storage_cli_pipeline.username))
+    secret_access_key: ((bosh_ali_storage_cli_pipeline.password))
+
+- name: bosh-golang-release-image
+  type: docker-image
+  source:
+    repository: bosh/golang-release
+    username: ((dockerhub_username))
+    password: ((dockerhub_password))
+
+- name: ali-storage-cli-docker-image
+  type: docker-image
+  source:
+    repository: bosh/ali-storage-cli
+    username: ((dockerhub_username))
+    password: ((dockerhub_password))
+
+- name: weekly
+  type: time
+  source:
+    start: 12:00
+    stop: 13:00
+    days: [ Saturday ]
