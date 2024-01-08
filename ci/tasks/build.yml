@@ -1,0 +1,15 @@
+---
+platform: linux
+image_resource:
+  type: registry-image
+  source:
+    repository: bosh/ali-storage-cli
+inputs:
+- name: bosh-ali-storage-cli
+- name: version-semver
+outputs:
+- name: out
+run:
+  path: bosh-ali-storage-cli/ci/scripts/build.sh
+params:
+  GOOS: linux
