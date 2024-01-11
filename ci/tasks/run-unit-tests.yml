@@ -1,0 +1,14 @@
+---
+platform: linux
+
+image_resource:
+  type: registry-image
+  source:
+    repository: bosh/ali-storage-cli
+
+inputs:
+  - name: bosh-ali-storage-cli
+
+run:
+  path: ci/scripts/run-unit-tests.sh
+  dir: bosh-ali-storage-cli
